@@ -44,11 +44,33 @@ class DeadBlockPredictor {
 
         bool predict_to_be_dead(uint32_t signature){
             // Return true if predicted dead, false if live
+            int confidence=counters[0][hash1(signature)]+counters[1][hash2(signature)]+counters[2][hash3(signature)];
+            return (confidence>=THRESHOLD);
         }
 
         void update(uint32_t signature, bool dead){
             // Update the predictor based on actual outcome for an LLC fill
             // ( Call this on LLC eviction and hit)
+            if(dead){
+                if(counters[0][hash1(signature)]<3) counters[0][hash1(signature)]++;
+            }
+            else{
+                if(counters[0][hash1(signature)]>0) counters[0][hash1(signature)]--;
+            }
+
+            if(dead){
+                if(counters[1][hash2(signature)]<3) counters[1][hash2(signature)]++;
+            }
+            else{
+                if(counters[1][hash2(signature)]>0) counters[1][hash2(signature)]--;
+            }
+            
+            if(dead){
+                if(counters[2][hash3(signature)]<3) counters[2][hash3(signature)]++;
+            }
+            else{
+                if(counters[2][hash3(signature)]>0) counters[2][hash3(signature)]--;
+            }
         }
 };
 #endif 
