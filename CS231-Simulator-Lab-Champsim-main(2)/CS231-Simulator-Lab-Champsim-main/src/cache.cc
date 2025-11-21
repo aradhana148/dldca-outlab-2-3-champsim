@@ -176,6 +176,23 @@ void CACHE::handle_fill()
       trackaddr(fill_mshr->address, NAME, "handle_fill");
     #endif
 
+    if(check_string(NAME,"LLC")){
+      if(warmup_complete[fill_mshr->cpu] && (fill_mshr->cycle_enqueued!=0)){
+        total_miss_latency+=current_cycle-fill_mshr->cycle_enqueued;
+      }
+      sim_miss[fill_mshr->cpu][fill_mshr->type]++;
+      sim_access[fill_mshr->cpu][fill_mshr->type]++;
+      if(fill_mshr->returnToLowerLevels){ //send to l2 
+        for(auto a:fill_mshr->to_return){
+          a->return_data(&(*fill_mshr));
+        }
+        fill_mshr->isReturned=true;
+      }
+      MSHR.erase(fill_mshr);
+      writes_available_this_cycle--;
+      continue;
+    }
+
     bool success = filllike_miss(set, way, *fill_mshr);
     if (!success) {
       return;
@@ -365,6 +382,14 @@ void CACHE::readlike_hit(std::size_t set, std::size_t way, PACKET& handle_pkt)
     pf_useful++;
     hit_block.prefetch = 0;
   }
+  if(check_string(NAME,"LLC")){
+    if(std::find(observers.begin(),observers.end(),set)!=observers.end()){
+      dp_predictor.update(hit_block.ip,false);
+    }
+  }
+  if(check_string(NAME,"LLC")){
+    hit_block.valid=0;
+  }
 }
 
 bool CACHE::readlike_miss(PACKET& handle_pkt)
@@ -503,6 +528,17 @@ bool CACHE::filllike_miss(std::size_t set, std::size_t way, PACKET& handle_pkt)
     std::cout << " cycle: " << current_cycle << std::endl;
   });
 
+  if(check_string(NAME,"LLC") && handle_pkt.type==WRITEBACK){
+    if(dp_predictor.predict_to_be_dead(handle_pkt.ip)){
+      if(warmup_complete[handle_pkt.cpu] && (handle_pkt.cycle_enqueued!= 0)){
+        total_miss_latency+=(current_cycle-handle_pkt.cycle_enqueued);
+      }
+      sim_miss[handle_pkt.cpu][handle_pkt.type]++;
+      sim_access[handle_pkt.cpu][handle_pkt.type]++;
+      return true;  
+    }
+  }
+
   bool bypass = (way == NUM_WAY);
 #ifndef LLC_BYPASS
   assert(!bypass);
@@ -517,7 +553,7 @@ bool CACHE::filllike_miss(std::size_t set, std::size_t way, PACKET& handle_pkt)
   trackaddr(handle_pkt.address, NAME, "filllike_miss");
 #endif
   if (!bypass) {
-    if (evicting_dirty) {
+    if (evicting_dirty||((lower_level!=NULL) && check_string(NAME,"L2C") && !fill_block.dirty)) {
       PACKET writeback_packet;
 
       writeback_packet.fill_level = lower_level->fill_level;
@@ -525,15 +561,21 @@ bool CACHE::filllike_miss(std::size_t set, std::size_t way, PACKET& handle_pkt)
       writeback_packet.address = fill_block.address;
       writeback_packet.data = fill_block.data;
       writeback_packet.instr_id = handle_pkt.instr_id;
-      writeback_packet.ip = 0;
+      writeback_packet.ip = fill_block.ip;
       writeback_packet.type = WRITEBACK;
       writeback_packet.l2Hit = fill_block.l2Hit;
       writeback_packet.from_llc = fill_block.from_llc;
+      writeback_packet.dirty=fill_block.dirty;
       auto result = lower_level->add_wq(&writeback_packet);
       if (result == -2)
         return false;
     }
 
+    if(check_string(NAME,"LLC") && fill_block.valid){
+      if(std::find(observers.begin(),observers.end(),set)!=observers.end()){
+        dp_predictor.update(fill_block.ip,true);
+      }
+    }
     if (ever_seen_data)
       evicting_address = fill_block.address & ~bitmask(match_offset_bits ? 0 : OFFSET_BITS);
     else
