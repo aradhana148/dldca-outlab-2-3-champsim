@@ -162,6 +162,23 @@ void CACHE::handle_fill()
       trackaddr(fill_mshr->address, NAME, "handle_fill");
     #endif
 
+    if(check_string(NAME,"LLC")){
+      if(warmup_complete[fill_mshr->cpu] && (fill_mshr->cycle_enqueued!=0)){
+        total_miss_latency+=current_cycle-fill_mshr->cycle_enqueued;
+      }
+      sim_miss[fill_mshr->cpu][fill_mshr->type]++;
+      sim_access[fill_mshr->cpu][fill_mshr->type]++;
+      if(fill_mshr->returnToLowerLevels){ //send to l2 
+        for(auto a:fill_mshr->to_return){
+          a->return_data(&(*fill_mshr));
+        }
+        fill_mshr->isReturned=true;
+      }
+      MSHR.erase(fill_mshr);
+      writes_available_this_cycle--;
+      continue;
+    }
+
     bool success = filllike_miss(set, way, *fill_mshr);
     if (!success) {
       return;
@@ -351,6 +368,9 @@ void CACHE::readlike_hit(std::size_t set, std::size_t way, PACKET& handle_pkt)
     pf_useful++;
     hit_block.prefetch = 0;
   }
+  if(check_string(NAME,"LLC")){
+    hit_block.valid=0;
+  }
 }
 
 bool CACHE::readlike_miss(PACKET& handle_pkt)
@@ -503,7 +523,7 @@ bool CACHE::filllike_miss(std::size_t set, std::size_t way, PACKET& handle_pkt)
   trackaddr(handle_pkt.address, NAME, "filllike_miss");
 #endif
   if (!bypass) {
-    if (evicting_dirty) {
+    if (evicting_dirty||((lower_level!=NULL) && check_string(NAME,"L2C") && !fill_block.dirty)) {
       PACKET writeback_packet;
 
       writeback_packet.fill_level = lower_level->fill_level;
@@ -515,6 +535,8 @@ bool CACHE::filllike_miss(std::size_t set, std::size_t way, PACKET& handle_pkt)
       writeback_packet.type = WRITEBACK;
       writeback_packet.l2Hit = fill_block.l2Hit;
       writeback_packet.from_llc = fill_block.from_llc;
+      writeback_packet.dirty = fill_block.dirty;
+
       auto result = lower_level->add_wq(&writeback_packet);
       if (result == -2)
         return false;
